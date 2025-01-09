@@ -1,7 +1,7 @@
 import argparse
 import re
 import os
-from typing import List, Dict
+from typing import List, Dict, Union
 from subprocess import call
 
 
@@ -15,8 +15,17 @@ class Block:
     """
 
     def __init__(self, content: str, container: str) -> None:
-        self.content = content
-        self.container = os.path.basename(container).rsplit(".", 1)[0]
+        # Ensure 'container' is a file and not a directory
+        if os.path.isdir(container):
+            raise ValueError(f"The container '{container}' is a directory, not a file.")
+
+        # Ensure the file exists
+        if not os.path.exists(container):
+            raise FileNotFoundError(f"The file '{container}' does not exist.")
+
+        # Set the content and container attributes
+        self.content: str = content
+        self.container: str = os.path.basename(container).rsplit(".", 1)[0]
 
 
 class FileBlock(Block):
@@ -34,14 +43,30 @@ class FileBlock(Block):
     """
 
     def __init__(self, content: str, container: str, language: str, name: str) -> None:
+        # Initialize the parent class
         super().__init__(content, container)
-        self.language = language
-        self.location = name
-        self.name = os.path.basename(name).rsplit(".", 1)[0]
+
+        # Check if the provided 'name' is a directory
+        if os.path.isdir(name):
+            raise ValueError(f"The name '{name}' is a directory, not a file.")
+
+        # Initialize FileBlock-specific attributes
+        self.language: str = language
+        self.location: str = name
+
         self.calling: List[str] = []
         self.called_by: List[str] = []
-        self.type = "file"
-        self.calling_name = ""
+        if not hasattr(self, "type"):
+            # Ensure that 'name' contains an extension
+            if not os.path.splitext(name)[1]:
+                raise ValueError(
+                    f"The name '{name}' does not contain a file extension."
+                )
+            self.name: str = os.path.basename(name).rsplit(".", 1)[0]
+            self.type: str = "file"
+        else:
+            self.name: str = os.path.basename(name).rsplit(".", 1)[0]
+        self.calling_name: str = ""
 
 
 class CodeBlock(FileBlock):
@@ -53,8 +78,8 @@ class CodeBlock(FileBlock):
     """
 
     def __init__(self, content: str, container: str, language: str, name: str) -> None:
+        self.type: str = "code"
         super().__init__(content, container, language, name)
-        self.type = "code"
 
 
 class DocumentationBlock(Block):
@@ -67,7 +92,7 @@ class DocumentationBlock(Block):
 
     def __init__(self, content: str, container: str) -> None:
         super().__init__(content, container)
-        self.type = "doc"
+        self.type: str = "doc"
 
 
 class Container:
@@ -84,16 +109,24 @@ class Container:
     """
 
     def __init__(self, name: str) -> None:
+        # Ensure 'name' is a file and not a directory
+        if os.path.isdir(name):
+            raise ValueError(f"The container file '{name}' is a directory, not a file.")
+
+        # Ensure the file exists
+        if not os.path.exists(name):
+            raise FileNotFoundError(f"The file '{name}' does not exist.")
+
         self.blocks: List[Block] = []
-        self.name = os.path.basename(name).rsplit(".", 1)[0]
-        self.code_dir = ""
-        self.doc_dir = ""
-        self.title = ""
-        self.execute = []  # VERY DANGEROUS
-        self.local_link = []
-        self.web_link = []  # VERY DANGEROUS
-        self.local_script = []
-        self.web_script = []  # VERY DANGEROUS
+        self.name: str = os.path.basename(name).rsplit(".", 1)[0]
+        self.code_dir: str = ""
+        self.doc_dir: str = ""
+        self.title: str = ""
+        self.execute: List[str] = []  # VERY DANGEROUS
+        self.local_link: List[List[str]] = []
+        self.web_link: List[List[str]] = []  # VERY DANGEROUS
+        self.local_script: List[str] = []
+        self.web_script: List[str] = []  # VERY DANGEROUS
 
     def add(self, block: Block) -> None:
         """
@@ -111,18 +144,78 @@ class Container:
         Args:
             title (str): The title to set.
         """
-        self.title = title
+        self.title: str = title
 
     def add_llink(self, link_type: str, link_address: str) -> None:
+        """
+        Adds a local link to the container, checking if the file exists.
+
+        Args:
+            link_type (str): The type of link (e.g., "image", "style").
+            link_address (str): The address of the local link (file path).
+
+        Raises:
+            FileNotFoundError: If the provided file does not exist.
+        """
+        if not os.path.exists(link_address):
+            raise FileNotFoundError(f"The file '{link_address}' does not exist.")
+
         self.local_link.append([link_type, link_address])
 
     def add_wlink(self, link_type: str, link_address: str) -> None:
+        """
+        Adds a web link to the container.
+
+        Args:
+            link_type (str): The type of link (e.g., "CSS", "JavaScript").
+            link_address (str): The address of the web link.
+        """
         self.web_link.append([link_type, link_address])
+
+    def set_code_dir(self, dir: str) -> None:
+        """
+        Sets the code directory for the container, ensuring the directory ends with a '/'.
+
+        Args:
+            dir (str): The directory path to be set as the code directory.
+
+        Raises:
+            ValueError: If the provided directory does not end with a '/'.
+        """
+        # Only do something if the directory isnt empty
+        if not dir:
+            return
+
+        # Ensure the code directory ends with a '/'
+        if not dir.endswith("/"):
+            raise ValueError("Code directory must end with a '/'")
+
+        self.code_dir = dir
+
+    def set_doc_dir(self, dir: str) -> None:
+        """
+        Sets the documentation directory for the container, ensuring the directory ends with a '/'.
+
+        Args:
+            dir (str): The directory path to be set as the documentation directory.
+
+        Raises:
+            ValueError: If the provided directory does not end with a '/'.
+        """
+        # Only do something if the directory isnt empty
+        if not dir:
+            return
+
+        # Ensure the documentation directory ends with a '/'
+        if not dir.endswith("/"):
+            raise ValueError("Documentation directory must end with a '/'")
+
+        self.doc_dir = dir
 
 
 def make_block(
     block_type: str, content: str, container: str, language: str = "", name: str = ""
-) -> Block:
+) -> Union[DocumentationBlock, FileBlock, CodeBlock]:
     """
     Creates a block based on the type.
 
@@ -135,8 +228,13 @@ def make_block(
 
     Returns:
         Block: The created block.
+
+    Raises:
+        ValueError: If the block type is unknown.
     """
     content = content.rstrip("\n")  # remove the last "\n"
+
+    # Determine the block type and return the corresponding block
     if block_type == "doc":
         return DocumentationBlock(content, container)
     elif block_type == "file":
@@ -149,47 +247,69 @@ def make_block(
 
 def parse_files(filenames: List[str]) -> Dict[str, Container]:
     """
-    Parses files and creates containers with blocks.
+    Parses files and creates containers with blocks, with additional checks for empty files, missing metadata, and invalid blocks.
 
     Args:
         filenames (List[str]): List of filenames to parse.
 
     Returns:
-        Dict[str, Container]: Dictionary of containers.
+        Dict[str, Container]: Dictionary of containers created from the parsed files.
     """
 
     def extract_last_match(pattern: str, content: str) -> str:
+        """
+        Extracts the last match of a given pattern in the content.
+
+        Args:
+            pattern (str): The regular expression pattern.
+            content (str): The content to search in.
+
+        Returns:
+            str: The last match found, or an empty string if no match is found.
+        """
         matches = re.findall(pattern, content)
         return matches[-1] if matches else ""
 
-    containers: Dict[str, Container] = {}
-    pattern1 = r"```([\w_]+) ([\w_.-]+)\s*"  # Code and file block starting
-    pattern2 = r"```\s*"  # Code and file block ending
+    containers: Dict[str, Container] = {}  # Dictionary to hold container objects
+    pattern1: str = r"``` ?([\w_]+) ([\w_.-]+)\s*"  # Code and file block starting
+    pattern2: str = r"```\s*"  # Code and file block ending
 
     for filename in filenames:
-        container = Container(filename)
-        with open(filename, "r") as file:
-            text = file.read()
+        container: Container = Container(filename)
 
-        container.title = extract_last_match(r"@title{(.*?)}", text)
-        container.doc_dir = extract_last_match(r"@documentation_folder{(.*?)}", text)
-        container.code_dir = extract_last_match(r"@code_folder{(.*?)}", text)
+        with open(filename, "r") as file:
+            text: str = file.read()
+
+        if not text.strip():
+            raise ValueError(f"The file '{filename}' is empty")
+
+        # Extract metadata
+        container.set_title(extract_last_match(r"@title{(.*?)}", text))
+        container.set_doc_dir(extract_last_match(r"@documentation_folder{(.*?)}", text))
+        container.set_code_dir(extract_last_match(r"@code_folder{(.*?)}", text))
         container.execute = re.findall(r"@execute_end{(.*?)}", text)
         container.local_script = re.findall(r"@local_script{(.*?)}", text)
-        container.web_script = re.findall(r"@web_script{(.*?)}", text)  # dangerous
-        links = re.findall(r"@local_link{(.*?)}", text)
+        container.web_script = re.findall(r"@web_script{(.*?)}", text)
+
+        # Process links
+        links: List[str] = re.findall(r"@local_link{(.*?)}", text)
         if links:
             for link in links:
-                link = link.split()
-                container.add_llink(link[0], link[1])
+                link_parts: List[str] = link.split()
+                container.add_llink(link_parts[0], link_parts[1])
+
         links = re.findall(r"@web_link{(.*?)}", text)
         if links:
             for link in links:
-                link = link.split()
-                container.add_wlink(link[0], link[1])
+                link_parts: List[str] = link.split()
+                container.add_wlink(link_parts[0], link_parts[1])
 
-        content, language, name = "", "", ""
-        block_type = "doc"  # Doc is the default.
+        # Process content and block types
+        content: str = ""
+        language: str = ""
+        name: str = ""
+        block_type: str = "doc"  # Default block type
+
         for line in text.split("\n"):
             start_match = re.match(pattern1, line)
             end_match = re.match(pattern2, line)
@@ -212,8 +332,10 @@ def parse_files(filenames: List[str]) -> Dict[str, Container]:
             else:
                 content += line + "\n"
 
-        if content:
+        # Ensure the last block is added if there is any content left
+        if content and block_type != "doc":
             container.add(make_block(block_type, content, filename, language, name))
+
         containers[container.name] = container
 
     return containers
@@ -425,44 +547,51 @@ def write_html(containers: Dict[str, Container], blocks: Dict[str, Block]) -> No
             file.write(html)
 
 
-def main(filenames=[]):
-    containers = parse_files(filenames)
+class Litera:
+    def __init__(self, filenames):
+        self.containers = parse_files(filenames)
+        self.code_blocks = {}
+        self.file_blocks = {}
+        self.make_blocks()
 
-    # Split into code and file blocks
-    code_blocks = {}
-    file_blocks = {}
-    for container in containers.values():
-        for block in container.blocks:
-            if block.type == "file":
-                file_blocks[block.name] = block
-            elif block.type == "code":
-                code_blocks[block.name] = block
+    def make_blocks(self):
+        for container in self.containers.values():
+            for block in container.blocks:
+                if block.type == "file":
+                    self.file_blocks[block.name] = block
+                elif block.type == "code":
+                    self.code_blocks[block.name] = block
 
-    # Writing Code
-    for block in file_blocks.keys():
-        output = replace_calls(file_blocks[block].content, code_blocks, 0)
-        container = containers[file_blocks[block].container]
-        if not os.path.exists(container.code_dir) and container.code_dir:
-            os.makedirs(container.code_dir)
-        with open(container.code_dir + file_blocks[block].location, "w") as file:
-            file.write(output)
+    def write_code(self):
+        for block in self.file_blocks.keys():
+            output = replace_calls(self.file_blocks[block].content, self.code_blocks, 0)
+            container = self.containers[self.file_blocks[block].container]
+            if not os.path.exists(container.code_dir) and container.code_dir:
+                os.makedirs(container.code_dir)
+            with open(
+                container.code_dir + self.file_blocks[block].location, "w"
+            ) as file:
+                file.write(output)
 
-    # Writing Documentations
-    blocks_dict = {**file_blocks, **code_blocks}
-    blocks_dict = find_calls(containers, blocks_dict)
-    write_html(containers, blocks_dict)
+    def write_documentation(self):
+        blocks_dict = {**self.file_blocks, **self.code_blocks}
+        blocks_dict = find_calls(self.containers, blocks_dict)
+        write_html(self.containers, blocks_dict)
 
-    # Running Executions
-    for container in containers.values():
-        for command in container.execute:
-            call(command.split())
+    def run_executions(self):
+        for container in self.containers.values():
+            for command in container.execute:
+                call(command.split())
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Converts Markdown code to python and html code"
+        description="Converts Markdown code to regular code and html"
     )
     parser.add_argument("--files", nargs="+", help="List of file names", required=True)
     args = parser.parse_args()
     filenames = args.files
-    main(filenames)
+    Litera(filenames=filenames)
+    Litera.write_code()
+    Litera.write_documentation()
+    Litera.run_executions()
